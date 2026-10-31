@@ -4,7 +4,6 @@ FROM node:22-alpine AS deps
 WORKDIR /app
 
 COPY package*.json ./
-
 RUN npm ci
 
 FROM node:22-alpine AS builder
@@ -16,8 +15,10 @@ COPY . .
 
 ARG NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
-
 ENV NEXT_TELEMETRY_DISABLED=1
+
+# Ensure public directory exists
+RUN mkdir -p public
 
 RUN npm run build
 
