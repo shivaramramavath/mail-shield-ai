@@ -1,0 +1,27 @@
+services:
+  mongo:
+    image: mongo:7
+    volumes: [mongo_data:/data/db]
+  ml:
+    build: ./apps/ml-service
+    ports: ["8000:8000"]
+  server:
+    build: ./apps/server
+    environment:
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-llama-3.3-70b-versatile}
+      MONGO_URI: mongodb://mongo:27017/mailshield
+      ML_URL: http://ml:8000
+      WEB_ORIGIN: http://localhost:3000
+      PORT: 4000
+    depends_on: [mongo, ml]
+    ports: ["4000:4000"]
+  web:
+    build:
+      context: ./apps/web
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:4000
+    depends_on: [server]
+    ports: ["3000:3000"]
+volumes:
+  mongo_data:
