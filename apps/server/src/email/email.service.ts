@@ -1,36 +1,81 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import { MlService } from '../ml/ml.service';
+import { Injectable } from '@nestjs/common';
 import { AiService } from '../ai/ai.service';
-import { Analysis } from '../analytics/analysis.schema';
+import { MlService } from '../ml/ml.service';
+import { AnalyticsService } from '../analytics/analytics.service';
+import { GenerateEmailDto } from './dto/generate-email.dto';
+
 @Injectable()
 export class EmailService {
-  constructor(private readonly ml: MlService, private readonly ai: AiService, @InjectModel(Analysis.name) private readonly analyses: Model<Analysis>) {}
+  constructor(
+    private readonly ml: MlService,
+    private readonly ai: AiService,
+    private readonly analytics: AnalyticsService,
+  ) {}
+
   async analyze(text: string) {
-    const started = Date.now();
+    const startedAt = Date.now();
     const prediction = await this.ml.predict(text);
-    const durationMs = Date.now() - started;
-    // Never store raw email text.
-    await this.analyses.create({ label: prediction.label, spamProbability: prediction.spamProbability, durationMs, modelVersion: prediction.modelVersion }).catch(() => undefined);
-    return { ...prediction, durationMs, disclaimer: 'Demonstration model; not a security verdict.' };
+    const durationMs = Date.now() - startedAt;
+
+    // Store only classification metadata, never the submitted email body.
+    await this.analytics.record({
+      label: prediction.label,
+      spamProbability: prediction.spamProbability,
+      durationMs,
+    });
+
+    return {
+      label: prediction.label,
+      spamProbability: prediction.spamProbability,
+      hamProbability: prediction.hamProbability,
+      durationMs,
+      modelVersion: prediction.modelVersion ?? null,
+    };
   }
-  generate(prompt: string, tone = 'professional') { return this.ai.generate(prompt, tone); }
-  improve(text: string) { return this.ai.improve(text); }
-  security(text: string) { return this.ai.security(text); }
-  async batch(emails: string[]) {
-    if (emails.some(x => typeof x !== 'string' || !x.trim() || x.length > 20000)) throw new BadRequestException('Every email must contain 1–20000 characters');
-    return this.ml.batch(emails);
+
+  async generate(dto: GenerateEmailDto) {
+    const content = await this.ai.generate(dto.prompt, dto.tone, dto.length);
+    return { content };
   }
-  async overview() {
-    const [total, spam, stats] = await Promise.all([
-      this.analyses.countDocuments(), this.analyses.countDocuments({ label: 'spam' }),
-      this.analyses.aggregate([{ $group: { _id: null, avgDurationMs: { $avg: '$durationMs' } } }]),
-    ]);
-    return { total, spam, ham: total - spam, avgDurationMs: Math.round(stats[0]?.avgDurationMs || 0) };
+
+  async improve(text: string) {
+    const content = await this.ai.improve(text);
+    return { content };
   }
-  feedback(text: string, correctLabel: string) {
-    // Avoid storing raw user emails or treating anonymous feedback as verified labels.
-    return { accepted: true, message: 'Feedback received for this session; dataset changes require a reviewed labeling workflow.', correctLabel };
+
+  async securityScan(text: string) {
+    const report = await this.ai.securityScan(text);
+    return { report };
+  }
+
+  async batchAnalyze(emails: string[]) {
+    // Bounded concurrency prevents a large batch from overwhelming FastAPI.
+    const results: Array<any> = new Array(emails.length);
+    const concurrency = 4;
+    let nextIndex = 0;
+
+    const workers = Array.from(
+      { length: Math.min(concurrency, emails.length) },
+      async () => {
+        while (true) {
+          const index = nextIndex++;
+          if (index >= emails.length) return;
+          try {
+            results[index] = {
+              index,
+              ...(await this.analyze(emails[index])),
+            };
+          } catch (error) {
+            results[index] = {
+              index,
+              error: error instanceof Error ? error.message : 'Analysis failed',
+            };
+          }
+        }
+      },
+    );
+
+    await Promise.all(workers);
+    return { total: emails.length, results };
   }
 }

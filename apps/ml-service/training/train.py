@@ -6,7 +6,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 
 ROOT = Path(__file__).resolve().parents[1]
-source = ROOT / 'datasets' / 'spam.csv'
+source = ROOT / 'datasets' / 'spam_ham_dataset.csv'
 texts, labels = [], []
 with source.open(encoding='utf-8-sig', newline='') as f:
     for row in csv.DictReader(f):
