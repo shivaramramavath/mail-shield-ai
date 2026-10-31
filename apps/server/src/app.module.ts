@@ -5,6 +5,7 @@ import { EmailModule } from './email/email.module';
 import { AiModule } from './ai/ai.module';
 import { MlModule } from './ml/ml.module';
 import { AnalyticsModule } from './analytics/analytics.module';
+import { AppController } from './app.controller';
 
 @Module({
   imports: [
@@ -22,5 +23,6 @@ import { AnalyticsModule } from './analytics/analytics.module';
     AnalyticsModule,
     EmailModule,
   ],
+   controllers: [AppController],
 })
 export class AppModule {}
