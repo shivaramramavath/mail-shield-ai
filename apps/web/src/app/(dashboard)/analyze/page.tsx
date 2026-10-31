@@ -1,11 +1,2 @@
-
-import type { Metadata } from "next";
-import EmailWorkspace from "../_components/email-workspace";
-
-export const metadata: Metadata = {
-  title: "Analyze Email",
-};
-
-export default function AnalyzePage() {
-  return <EmailWorkspace mode="analyze" />;
-}
+import { WorkspaceTool } from '../_components/workspace-tool';
+export default function AnalyzePage() { return <WorkspaceTool mode="analyze" />; }
