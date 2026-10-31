@@ -15,14 +15,23 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+const API =
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
 type Mode = "analyze" | "generate" | "improve" | "security" | "batch";
+
+type ApiResult = Record<string, unknown>;
 
 type Prediction = {
   label: string;
@@ -37,16 +46,33 @@ interface Props {
   mode: Mode;
 }
 
+function getString(
+  value: unknown,
+  fallback = ""
+): string {
+  return typeof value === "string" ? value : fallback;
+}
+
+function getNumber(
+  value: unknown,
+  fallback = 0
+): number {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : fallback;
+}
+
 export default function EmailWorkspace({ mode }: Props) {
   const [text, setText] = useState("");
   const [tone, setTone] = useState("professional");
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<unknown>(null);
+  const [result, setResult] = useState<ApiResult | null>(null);
 
   const config = {
     analyze: {
       title: "Email Spam Detection",
-      description: "Identify spam and legitimate emails using machine learning.",
+      description:
+        "Identify spam and legitimate emails using machine learning.",
       placeholder: "Paste your complete email content here...",
       button: "Analyze Email",
     },
@@ -64,13 +90,15 @@ export default function EmailWorkspace({ mode }: Props) {
     },
     security: {
       title: "Email Security Scanner",
-      description: "Analyze suspicious language and possible phishing attempts.",
+      description:
+        "Analyze suspicious language and possible phishing attempts.",
       placeholder: "Paste a suspicious email here...",
       button: "Scan Email",
     },
     batch: {
       title: "Batch Email Analysis",
-      description: "Enter one email per line to classify multiple emails.",
+      description:
+        "Enter one email per line to classify multiple emails.",
       placeholder: "Enter email 1...\nEnter email 2...",
       button: "Analyze Emails",
     },
@@ -80,6 +108,18 @@ export default function EmailWorkspace({ mode }: Props) {
     if (!text.trim()) {
       toast.error("Please enter email content.");
       return;
+    }
+
+    if (mode === "batch") {
+      const emails = text
+        .split("\n")
+        .map((item) => item.trim())
+        .filter(Boolean);
+
+      if (emails.length > 20) {
+        toast.error("You can analyze a maximum of 20 emails at once.");
+        return;
+      }
     }
 
     setLoading(true);
@@ -97,10 +137,16 @@ export default function EmailWorkspace({ mode }: Props) {
       let body: Record<string, unknown>;
 
       if (mode === "generate") {
-        body = { prompt: text, tone };
+        body = {
+          prompt: text,
+          tone,
+        };
       } else if (mode === "batch") {
         body = {
-          emails: text.split("\n").map((item) => item.trim()).filter(Boolean),
+          emails: text
+            .split("\n")
+            .map((item) => item.trim())
+            .filter(Boolean),
         };
       } else {
         body = { text };
@@ -109,35 +155,80 @@ export default function EmailWorkspace({ mode }: Props) {
       const response = await axios.post(
         `${API}/api/v1${endpoints[mode]}`,
         body,
-        { timeout: 60000 }
+        {
+          timeout: 60000,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }
       );
 
-      setResult(response.data);
+      const data: unknown = response.data;
+
+      if (
+        typeof data !== "object" ||
+        data === null ||
+        Array.isArray(data)
+      ) {
+        throw new Error("Invalid response received from the server.");
+      }
+
+      setResult(data as ApiResult);
       toast.success("Processing completed.");
-    } catch (error) {
+    } catch (error: unknown) {
       const message = axios.isAxiosError(error)
-        ? error.response?.data?.message || error.message
-        : "Something went wrong.";
+        ? getString(
+            error.response?.data?.message,
+            error.message || "Request failed."
+          )
+        : error instanceof Error
+          ? error.message
+          : "Something went wrong.";
 
-      toast.error(
-        typeof message === "string" ? message : "Request failed."
-      );
+      toast.error(message);
     } finally {
       setLoading(false);
     }
   }
 
   async function copyResult() {
-    await navigator.clipboard.writeText(
-      JSON.stringify(result, null, 2)
-    );
-    toast.success("Result copied.");
+    if (!result) return;
+
+    try {
+      await navigator.clipboard.writeText(
+        JSON.stringify(result, null, 2)
+      );
+
+      toast.success("Result copied.");
+    } catch {
+      toast.error("Unable to copy result.");
+    }
   }
 
-  const prediction =
+  const prediction: Prediction | null =
     mode === "analyze" && result
-      ? (result as Prediction)
+      ? {
+          label: getString(result.label, "unknown"),
+          spamProbability: getNumber(
+            result.spamProbability ?? result.spam_probability
+          ),
+          hamProbability: getNumber(
+            result.hamProbability ?? result.ham_probability
+          ),
+          durationMs: getNumber(
+            result.durationMs ?? result.duration_ms
+          ),
+          modelVersion: getString(
+            result.modelVersion ?? result.model_version,
+            "Unknown"
+          ),
+          disclaimer: getString(result.disclaimer),
+        }
       : null;
+
+  const markdownContent = result
+    ? getString(result.content, JSON.stringify(result, null, 2))
+    : "";
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
@@ -175,7 +266,10 @@ export default function EmailWorkspace({ mode }: Props) {
 
           {mode === "generate" && (
             <div className="space-y-2">
-              <label className="text-sm font-medium">Email tone</label>
+              <label className="text-sm font-medium">
+                Email tone
+              </label>
+
               <select
                 value={tone}
                 onChange={(event) => setTone(event.target.value)}
@@ -193,7 +287,10 @@ export default function EmailWorkspace({ mode }: Props) {
               {text.length} / {mode === "generate" ? 2000 : 20000}
             </span>
 
-            <Button onClick={submit} disabled={loading || !text.trim()}>
+            <Button
+              onClick={submit}
+              disabled={loading || !text.trim()}
+            >
               {loading ? (
                 <>
                   <Loader2 className="mr-2 size-4 animate-spin" />
@@ -217,12 +314,14 @@ export default function EmailWorkspace({ mode }: Props) {
               <p className="text-sm text-muted-foreground">
                 Classification
               </p>
+
               <div className="mt-3 flex items-center gap-2">
-                {prediction.label === "spam" ? (
+                {prediction.label.toLowerCase() === "spam" ? (
                   <AlertTriangle className="size-5" />
                 ) : (
                   <ShieldCheck className="size-5" />
                 )}
+
                 <span className="text-2xl font-bold uppercase">
                   {prediction.label}
                 </span>
@@ -235,11 +334,16 @@ export default function EmailWorkspace({ mode }: Props) {
               <p className="text-sm text-muted-foreground">
                 Spam probability
               </p>
+
               <p className="mt-2 text-2xl font-bold">
                 {(prediction.spamProbability * 100).toFixed(2)}%
               </p>
+
               <Progress
-                value={prediction.spamProbability * 100}
+                value={Math.min(
+                  100,
+                  Math.max(0, prediction.spamProbability * 100)
+                )}
                 className="mt-3"
               />
             </CardContent>
@@ -248,29 +352,46 @@ export default function EmailWorkspace({ mode }: Props) {
           <Card className="sm:col-span-2">
             <CardContent className="grid gap-4 p-6 sm:grid-cols-3">
               <div>
-                <p className="text-xs text-muted-foreground">Ham probability</p>
+                <p className="text-xs text-muted-foreground">
+                  Ham probability
+                </p>
+
                 <p className="text-xl font-semibold">
                   {(prediction.hamProbability * 100).toFixed(2)}%
                 </p>
               </div>
+
               <div>
-                <p className="text-xs text-muted-foreground">Processing time</p>
+                <p className="text-xs text-muted-foreground">
+                  Processing time
+                </p>
+
                 <p className="text-xl font-semibold">
                   {prediction.durationMs} ms
                 </p>
               </div>
+
               <div>
-                <p className="text-xs text-muted-foreground">Model version</p>
+                <p className="text-xs text-muted-foreground">
+                  Model version
+                </p>
+
                 <p className="text-xl font-semibold">
                   {prediction.modelVersion || "Unknown"}
                 </p>
               </div>
             </CardContent>
           </Card>
+
+          {prediction.disclaimer && (
+            <p className="text-xs text-muted-foreground sm:col-span-2">
+              {prediction.disclaimer}
+            </p>
+          )}
         </div>
       )}
 
-      {result && (
+      {result !== null && (
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
             <div>
@@ -280,7 +401,12 @@ export default function EmailWorkspace({ mode }: Props) {
               </CardDescription>
             </div>
 
-            <Button size="icon" variant="outline" onClick={copyResult}>
+            <Button
+              size="icon"
+              variant="outline"
+              onClick={copyResult}
+              aria-label="Copy result"
+            >
               <Copy className="size-4" />
             </Button>
           </CardHeader>
@@ -293,9 +419,7 @@ export default function EmailWorkspace({ mode }: Props) {
             ) : (
               <article className="prose prose-neutral max-w-none dark:prose-invert prose-headings:font-semibold">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                  {typeof (result as { content?: unknown }).content === "string"
-                    ? (result as { content: string }).content
-                    : JSON.stringify(result, null, 2)}
+                  {markdownContent}
                 </ReactMarkdown>
               </article>
             )}
